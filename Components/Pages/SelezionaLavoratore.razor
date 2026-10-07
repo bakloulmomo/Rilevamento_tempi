@@ -1,0 +1,131 @@
+@page "/lavoratori"
+@layout GuestLayout
+@using System.Data
+@using Rilevamento_tempi.Services
+@inject LavoratoreSelezionatoService LavoratoreSelezionato
+@inject LavoratoriRepository LavoratoriRepository
+@inject NavigationManager Navigation
+@inject ILogger<SelezionaLavoratore> Logger
+
+<PageTitle>Seleziona lavoratore</PageTitle>
+
+<h1>Seleziona il tuo nome</h1>
+
+
+@if (!string.IsNullOrEmpty(messaggioErrore))
+{
+    <div class="alert alert-warning">@messaggioErrore</div>
+}
+else if (lavoratori == null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (lavoratori.Rows.Count == 0)
+{
+    <p>Nessun lavoratore trovato.</p>
+}
+else
+{
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                @if (HaColonneLavoratore())
+                {
+                    <th>Codice</th>
+                    <th>Nome</th>
+                }
+                else
+                {
+                    @foreach (DataColumn colonna in lavoratori.Columns)
+                    {
+                        <th>@colonna.ColumnName</th>
+                    }
+                }
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (DataRow riga in lavoratori.Rows)
+            {
+                <tr>
+                    @if (HaColonneLavoratore())
+                    {
+                        <td>@(riga["tb_codcope"]?.ToString())</td>
+                        <td>@(riga["tb_descope"]?.ToString())</td>
+                    }
+                    else
+                    {
+                        @foreach (DataColumn colonna in lavoratori.Columns)
+                        {
+                            <td>@(riga[colonna]?.ToString())</td>
+                        }
+                    }
+                    <td>
+                        @{
+                            var codice = HaColonneLavoratore()
+                                ? riga["tb_codcope"]?.ToString()
+                                : null;
+                            if (string.IsNullOrWhiteSpace(codice))
+                            {
+                                codice = lavoratori.Columns.Count > 0 ? riga[0]?.ToString() : null;
+                            }
+                            var idLavoratore = int.TryParse(codice?.Trim(), out var id) && id > 0 ? id : 0;
+                        }
+                        <button class="btn btn-sm btn-primary" @onclick="() => SelezionaLavoratoreAsync(idLavoratore)" disabled="@(idLavoratore <= 0)">Accedi</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private DataTable? lavoratori;
+    private string? messaggioErrore;
+
+    private bool HaColonneLavoratore() =>
+        lavoratori?.Columns.Contains("tb_codcope") == true &&
+        lavoratori.Columns.Contains("tb_descope");
+
+    protected override async Task OnInitializedAsync()
+    {
+        // se esiste già un lavoratore selezionato, reindirizza alla app principale
+        if (LavoratoreSelezionato.IdLavoratore != null)
+        {
+            Navigation.NavigateTo("/tempi");
+            return;
+        }
+        try
+        {
+            lavoratori = await LavoratoriRepository.ElencaAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Errore durante il caricamento dell'elenco lavoratori");
+            messaggioErrore = "Impossibile caricare l'elenco dei lavoratori. Riprova più tardi.";
+        }
+    }
+
+    private Task SelezionaLavoratoreAsync(int idLavoratore)
+    {
+        if (idLavoratore <= 0)
+        {
+            messaggioErrore = "ID selezionato non valido.";
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            // La navigazione client-side mantiene il servizio Scoped nel circuito corrente.
+            LavoratoreSelezionato.Seleziona(idLavoratore);
+            Navigation.NavigateTo("/tempi");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Errore durante la selezione del lavoratore {IdLavoratore}", idLavoratore);
+            messaggioErrore = "Impossibile selezionare il lavoratore. Riprova.";
+        }
+
+        return Task.CompletedTask;
+    }
+}

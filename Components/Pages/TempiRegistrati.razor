@@ -1,0 +1,155 @@
+﻿@page "/tempi"
+@page "/weather"
+@using System.Data
+@using System.Security.Claims
+@using Microsoft.AspNetCore.WebUtilities
+@inject RilevazioniRepository RilevazioniRepository
+@inject IHttpContextAccessor HttpContextAccessor
+@inject LavoratoreSelezionatoService LavoratoreSelezionato
+@inject NavigationManager Navigazione
+@inject ILogger<TempiRegistrati> Logger
+<PageTitle>Tempi fatti</PageTitle>
+
+<h1>Tempi fatti</h1>
+
+@if (!string.IsNullOrEmpty(messaggioErrore))
+{
+    <div class="alert alert-warning">@messaggioErrore</div>
+}
+else if (rilevazioni == null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (rilevazioni.Rows.Count == 0)
+{
+    <p>Nessuna voce trovata per il tuo account.</p>
+}
+else
+{
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                @foreach (DataColumn colonna in rilevazioni.Columns)
+                {
+                    <th>@colonna.ColumnName</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (DataRow riga in rilevazioni.Rows)
+            {
+                <tr>
+                    @foreach (DataColumn colonna in rilevazioni.Columns)
+                    {
+                        <td>@(riga[colonna]?.ToString())</td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private DataTable? rilevazioni;
+    private string? messaggioErrore;
+
+    protected override async Task OnInitializedAsync()
+    {
+        int? idLavoratore = LavoratoreSelezionato.IdLavoratore;
+
+        // Prova prima il claim dell'utente, se l'autenticazione lo fornisce.
+        try
+        {
+            var user = HttpContextAccessor.HttpContext?.User;
+            if (user?.Identity?.IsAuthenticated == true)
+            {
+                var claim = user.FindFirst("id_lavoratore")
+                    ?? user.FindFirst(ClaimTypes.NameIdentifier)
+                    ?? user.FindFirst("sub")
+                    ?? user.FindFirst(ClaimTypes.Name);
+
+                if (claim != null && int.TryParse(claim.Value, out var idDaClaim))
+                {
+                    idLavoratore = idDaClaim;
+                    try
+                    {
+                        LavoratoreSelezionato.Seleziona(idDaClaim);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        // In assenza del claim, prova il parametro ?idLavoratore=123.
+        if (idLavoratore == null)
+        {
+            try
+            {
+                var indirizzo = Navigazione.ToAbsoluteUri(Navigazione.Uri);
+                if (!string.IsNullOrEmpty(indirizzo.Query))
+                {
+                    var parametri = QueryHelpers.ParseQuery(indirizzo.Query);
+                    if (parametri.TryGetValue("idLavoratore", out var valore) &&
+                        int.TryParse(valore, out var idDaParametro))
+                    {
+                        idLavoratore = idDaParametro;
+                        try
+                        {
+                            LavoratoreSelezionato.Seleziona(idDaParametro);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        // Come ultimo tentativo, legge il cookie currentWorkerId.
+        if (idLavoratore == null)
+        {
+            try
+            {
+                var valoreCookie = HttpContextAccessor.HttpContext?.Request?.Cookies["currentWorkerId"];
+                if (!string.IsNullOrEmpty(valoreCookie) && int.TryParse(valoreCookie, out var idDaCookie))
+                {
+                    idLavoratore = idDaCookie;
+                    try
+                    {
+                        LavoratoreSelezionato.Seleziona(idDaCookie);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        if (idLavoratore == null)
+        {
+            messaggioErrore = "Impossibile determinare l'ID del lavoratore. Configura l'autenticazione (claim 'id_lavoratore') o apri la pagina con ?idLavoratore=TUO_ID.";
+            return;
+        }
+
+        try
+        {
+            rilevazioni = await RilevazioniRepository.ElencaPerLavoratoreAsync(idLavoratore.Value);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Errore durante il caricamento delle rilevazioni per il lavoratore {IdLavoratore}", idLavoratore.Value);
+            messaggioErrore = "Impossibile caricare i tempi registrati. Riprova più tardi.";
+        }
+    }
+}

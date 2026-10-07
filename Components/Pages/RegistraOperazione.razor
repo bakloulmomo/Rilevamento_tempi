@@ -1,0 +1,204 @@
+﻿@page "/"
+@using Rilevamento_tempi.Services
+@inject LavoratoreSelezionatoService LavoratoreSelezionato
+@inject LavorazioniRepository LavorazioniRepository
+@inject RilevazioniRepository RilevazioniRepository
+@inject NavigationManager Navigation
+@inject ILogger<RegistraOperazione> Logger
+
+<PageTitle>Lavori</PageTitle>
+
+<h1 class="mb-4 text-center">Lavori</h1>
+
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-6">
+            <div class="card p-4">
+                <label for="codiceOdp" class="form-label">Inserisci codice ODP (solo numeri)</label>
+                <InputText @bind-Value="codiceOdp" @bind-Value:after="ReimpostaModulo" id="codiceOdp" type="text" inputmode="numeric" maxlength="7" pattern="[0-9]{1,7}" autocomplete="off" class="form-control" disabled="@salvataggioInCorso" />
+
+                @if (lavorazioni.Count > 0)
+                {
+                    <label for="lavorazioneSelect" class="form-label mt-3">Seleziona la lavorazione</label>
+                    <InputSelect @bind-Value="idLavorazioneSelezionata" @bind-Value:after="AggiornaStatoAsync" id="lavorazioneSelect" class="form-select" disabled="@salvataggioInCorso">
+                        <option value="">-- Seleziona una lavorazione --</option>
+                        @foreach (var lavorazione in lavorazioni)
+                        {
+                            <option value="@lavorazione.Id">@lavorazione.Id - @lavorazione.Nota</option>
+                        }
+                    </InputSelect>
+                }
+
+                @if (!string.IsNullOrEmpty(messaggioErrore))
+                {
+                    <div class="text-danger mt-2">@messaggioErrore</div>
+                }
+
+                <div class="mt-3 text-end">
+                    <button class="btn btn-primary" @onclick="ConfermaOdpAsync" disabled="@salvataggioInCorso">Conferma</button>
+                </div>
+
+                @if (lavorazioni.Count > 0)
+                {
+                    <div class="d-flex justify-content-center gap-3 mt-4">
+                        <button class="btn btn-success btn-lg" @onclick="AvviaAsync" disabled="@(salvataggioInCorso || !statoCaricato || !RilevazioniRepository.OperazioneConsentita(ultimaOperazione, "Start"))">Start</button>
+                        <button class="btn btn-secondary btn-lg" @onclick="MettiInPausaAsync" disabled="@(salvataggioInCorso || !statoCaricato || !RilevazioniRepository.OperazioneConsentita(ultimaOperazione, "Pausa"))">Pausa</button>
+                        <button class="btn btn-danger btn-lg" @onclick="FermaAsync" disabled="@(salvataggioInCorso || !statoCaricato || !RilevazioniRepository.OperazioneConsentita(ultimaOperazione, "Stop"))">Stop</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(messaggioConferma))
+                    {
+                        <div class="text-success text-center mt-2">@messaggioConferma</div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string? codiceOdp;
+    private string? messaggioErrore;
+    private List<Lavorazione> lavorazioni = [];
+    private int? idLavorazioneSelezionata;
+    private string? codiceOdpConfermato;
+    private bool salvataggioInCorso;
+    private string? messaggioConferma;
+    private string? ultimaOperazione;
+    private bool statoCaricato;
+
+    private void ReimpostaModulo()
+    {
+        lavorazioni.Clear();
+        idLavorazioneSelezionata = null;
+        codiceOdpConfermato = null;
+        messaggioErrore = null;
+        messaggioConferma = null;
+        ultimaOperazione = null;
+        statoCaricato = false;
+    }
+
+    private async Task ConfermaOdpAsync()
+    {
+        messaggioErrore = null;
+        messaggioConferma = null;
+        lavorazioni.Clear();
+        idLavorazioneSelezionata = null;
+        codiceOdpConfermato = null;
+        ultimaOperazione = null;
+        statoCaricato = false;
+
+        if (string.IsNullOrEmpty(codiceOdp) ||
+            codiceOdp.Length > 7 ||
+            !codiceOdp.All(char.IsAsciiDigit))
+        {
+            messaggioErrore = "Inserisci un codice ODP composto da 1 a 7 cifre.";
+            return;
+        }
+
+        var odp = codiceOdp;
+        try
+        {
+            var lavorazioni = await LavorazioniRepository.ElencaPerOdpAsync(odp);
+            if (lavorazioni.Count == 0)
+            {
+                messaggioErrore = "Nessuna lavorazione trovata per questo ODP.";
+                return;
+            }
+
+            this.lavorazioni = lavorazioni;
+            codiceOdpConfermato = odp;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Errore durante il caricamento delle lavorazioni per ODP {Odp}", odp);
+            messaggioErrore = "Impossibile caricare le lavorazioni. Riprova più tardi.";
+        }
+    }
+
+    private async Task AggiornaStatoAsync()
+    {
+        messaggioErrore = null;
+        ultimaOperazione = null;
+        statoCaricato = false;
+
+        if (LavoratoreSelezionato.IdLavoratore is not int idLavoratore ||
+            codiceOdpConfermato is not string odp ||
+            odp != codiceOdp ||
+            idLavorazioneSelezionata is not int idLavorazione)
+        {
+            return;
+        }
+
+        try
+        {
+            ultimaOperazione = await RilevazioniRepository.UltimaOperazioneAsync(
+                idLavoratore,
+                odp,
+                idLavorazione);
+            statoCaricato = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Errore durante il caricamento dello stato per ODP {Odp}, lavorazione {IdLavorazione}", odp, idLavorazione);
+            messaggioErrore = "Impossibile caricare lo stato della lavorazione. Riprova più tardi.";
+        }
+    }
+
+    private async Task RegistraOperazioneAsync(string tipoOperazione)
+    {
+        messaggioErrore = null;
+        messaggioConferma = null;
+
+        if (LavoratoreSelezionato.IdLavoratore is not int idLavoratore || idLavoratore <= 0)
+        {
+            messaggioErrore = "Nessun lavoratore collegato alla sessione. Seleziona nuovamente il lavoratore.";
+            return;
+        }
+
+        var odp = codiceOdp ?? string.Empty;
+        if (codiceOdpConfermato != odp ||
+            idLavorazioneSelezionata is not int idLavorazione ||
+            !lavorazioni.Any(lavorazione => lavorazione.Id == idLavorazione))
+        {
+            messaggioErrore = "Conferma l'ODP e seleziona una delle lavorazioni mostrate.";
+            return;
+        }
+
+        salvataggioInCorso = true;
+        try
+        {
+            await RilevazioniRepository.RegistraAsync(idLavoratore, odp, idLavorazione, tipoOperazione);
+            messaggioConferma = $"Operazione registrata: {tipoOperazione}";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Errore durante il salvataggio dell'operazione {TipoOperazione} per ODP {Odp}, lavorazione {IdLavorazione}", tipoOperazione, odp, idLavorazione);
+            messaggioErrore = "Impossibile salvare l'operazione. Verifica lo stato e riprova.";
+        }
+        finally
+        {
+            var erroreRegistrazione = messaggioErrore;
+            await AggiornaStatoAsync();
+            if (erroreRegistrazione is not null)
+            {
+                messaggioErrore = erroreRegistrazione;
+            }
+
+            salvataggioInCorso = false;
+        }
+    }
+
+    private Task AvviaAsync() => RegistraOperazioneAsync("Start");
+    private Task MettiInPausaAsync() => RegistraOperazioneAsync("Pausa");
+    private Task FermaAsync() => RegistraOperazioneAsync("Stop");
+
+    protected override void OnInitialized()
+    {
+        // Se non c'è un lavoratore selezionato, forza la selezione all'ingresso
+        if (LavoratoreSelezionato.IdLavoratore == null)
+        {
+            Navigation.NavigateTo("/lavoratori", true);
+        }
+    }
+}
+
